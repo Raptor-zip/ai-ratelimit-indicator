@@ -327,8 +327,9 @@ class ProviderCell {
 
     /* data はキャッシュ JSON。null = 未取得。戻り値はパネル描画用の状態 */
     render(data) {
-        // ログアウト後に前回の成功データが残っていても、未認証なら表示しない。
-        const visible = !!data && !(data.ok === false && data.error === 'no_credentials');
+        // ログアウト後やトークン失効後に前回の成功データが残っていても表示しない。
+        const hiddenErrors = ['no_credentials', 'token_expired'];
+        const visible = !!data && !(data.ok === false && hiddenErrors.includes(data.error));
         this.box.visible = visible;
         if (!visible)
             return null;
