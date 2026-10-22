@@ -14,11 +14,13 @@ function provider(id = 'claude', extra = {}) {
 function harness({data, status = 200, offline = false, cached, writeFails = false} = {}) {
   let stored = cached && JSON.stringify(cached);
   const labels = [];
+  const images = [];
+  const dates = [];
   class Stack {
     addStack() {return new Stack();}
     addText(value) {labels.push(value); return {};}
-    addDate(value) {return {applyRelativeStyle() {}};}
-    addImage() {return {};}
+    addDate(value) {dates.push(value); return {applyRelativeStyle() {}};}
+    addImage() {const image = {}; images.push(image); return image;}
     addSpacer() {}
     setPadding() {}
     centerAlignContent() {}
@@ -45,8 +47,8 @@ function harness({data, status = 200, offline = false, cached, writeFails = fals
     },
   });
   vm.runInContext(source.replace(/await main\(\);\s*$/, '') +
-    '\nglobalThis.api = {currentWindow, deltaFor, selectedProviders, loadSnapshot, renderWidget};', context);
-  return {api: context.api, labels, stored: () => stored};
+    '\nglobalThis.api = {currentWindow, deltaFor, selectedProviders, visibleProviders, loadSnapshot, renderWidget};', context);
+  return {api: context.api, labels, images, dates, stored: () => stored};
 }
 
 test('expired windows cannot look like spare capacity and missing resets have no pace', () => {
@@ -91,10 +93,51 @@ test('all home-screen sizes render and tapping keeps the selected providers', ()
     const data = {schema_version: 1, providers: ['claude', 'codex', 'kimi', 'agy', 'kimi2', 'kimi3'].map(id => provider(id))};
     const widget = api.renderWidget({data, offline: false}, family, 'codex,claude,kimi,agy,kimi2,kimi3', now);
     assert.match(widget.url, /providers=codex%2Cclaude/);
+    assert.match(widget.url, new RegExp(`family=${family}`));
     assert.ok(labels.includes('codex'));
-    assert.equal(labels.includes('claude'), family !== 'small');
+    assert.ok(labels.includes('claude'));
     assert.equal(labels.includes('kimi2'), family === 'large');
   }
+});
+
+test('2x2 small widget includes both Claude and Codex and all four graphs', () => {
+  const {api, labels, images} = harness();
+  api.renderWidget({data: {providers: [provider('claude'), provider('codex')]}, offline: false}, 'small', '', now);
+  assert.ok(labels.includes('claude'));
+  assert.ok(labels.includes('codex'));
+  assert.equal(images.length, 4);
+  const single = harness();
+  single.api.renderWidget({data: {providers: [provider('claude'), provider('codex')]}, offline: false}, 'small', 'codex', now);
+  assert.equal(single.images.length, 2);
+  assert.equal(single.labels.includes('claude'), false);
+});
+
+test('optional providers hide failed, stale, missing and expired usage; zero is valid', () => {
+  const {api} = harness();
+  const ids = providers => api.visibleProviders(providers, '', now).map(p => p.id).join(',');
+  for (const id of ['kimi', 'kimi2', 'kimi3', 'agy']) {
+    for (const extra of [
+      {ok: false, error: 'network'},
+      {ok: false, error: 'token_expired'},
+      {fetched_at: now - 1000},
+      {five_hour: {pct: null}, seven_day: {pct: null}},
+      {five_hour: {pct: 10, resets_at: now - 1}, seven_day: {pct: null}},
+    ]) assert.equal(ids([provider(id, extra)]), '');
+    assert.equal(ids([provider(id, {five_hour: {pct: 0}, seven_day: {pct: null}})]), id);
+    assert.equal(ids([provider(id, {five_hour: {pct: null}})]), id);
+  }
+  assert.equal(ids([provider('claude', {ok: false}), provider('codex', {ok: false})]), 'claude,codex');
+});
+
+test('unavailable optional providers do not consume medium cells or age the footer', () => {
+  const {api, labels, images, dates} = harness();
+  api.renderWidget({data: {providers: [provider('claude'), provider('codex'),
+    provider('kimi', {five_hour: null, seven_day: null}),
+    provider('agy', {ok: false, fetched_at: now - 90000})]}, offline: false}, 'medium', '', now);
+  assert.equal(labels.includes('kimi'), false);
+  assert.equal(labels.includes('agy'), false);
+  assert.equal(images.length, 4);
+  assert.equal(dates[0].getTime(), (now - 120) * 1000);
 });
 
 test('offline, stale, expired-token and empty states remain distinguishable', () => {

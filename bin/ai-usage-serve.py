@@ -138,12 +138,13 @@ textarea{width:100%;height:180px;box-sizing:border-box;margin-top:16px}</style>
 <h1>AI Usage · Scriptable</h1>
 <ol><li>下のボタンでスクリプトをコピー。</li>
 <li>Scriptableで「＋」→ 貼り付け。「AI Usage」と名付け、▶で一度実行。</li>
-<li>ホーム画面にScriptableの中サイズウィジェットを追加。
+<li>ホーム画面にScriptableの小サイズ（2×2）か中サイズのウィジェットを追加。
 長押し →「ウィジェットを編集」→ Scriptで「AI Usage」を選択。</li></ol>
 <button id="copy">スクリプトをコピー</button> <a href="scriptable:///add">Scriptableを開く</a>
 <p id="status" role="status"></p>
 <p>Parameterは空欄でOK。単独表示は <code>claude</code> や <code>codex</code>、
-選択・並べ替えは <code>codex,claude,kimi,agy</code>。小サイズは先頭の1件を表示します。</p>
+選択・並べ替えは <code>codex,claude,kimi,agy</code>。小サイズは先頭の2件を表示します。
+Kimi・AGYは、正常に取得した有効な使用率がある場合だけ表示します。</p>
 <p>タップで再取得。PCの取得間隔は約2分、ウィジェットの自動更新時刻はiOSが決めます。
 接続失敗時は保存したデータを表示します。</p>
 <a href="AI-Usage.js">.jsファイルを保存</a> · <a href="api/usage">接続確認（JSON）</a>

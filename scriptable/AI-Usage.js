@@ -39,6 +39,15 @@ function selectedProviders(providers, parameter) {
   if (!ids.length) return providers;
   return [...new Set(ids)].map(id => providers.find(p => p.id === id)).filter(Boolean);
 }
+function visibleProviders(providers, parameter, now) {
+  return selectedProviders(providers, parameter).filter(provider => {
+    if (provider.id !== "agy" && !/^kimi\d*$/.test(provider.id)) return true;
+    // Optional providers should occupy space only while they have usable data.
+    if (!provider.ok || !finite(provider.fetched_at) || now - provider.fetched_at > STALE_SECONDS) return false;
+    return [provider.five_hour, provider.seven_day]
+      .some(window => finite(currentWindow(window, now).pct));
+  });
+}
 function validSnapshot(data) {
   return data && data.schema_version === 1 && Array.isArray(data.providers)
     && data.providers.every(p => p && typeof p.id === "string" && typeof p.name === "string");
@@ -94,36 +103,36 @@ function bar(window, seconds, now, color) {
   }
   return ctx.getImage();
 }
-function addWindow(parent, label, raw, seconds, now, dim, detailed) {
+function addWindow(parent, label, raw, seconds, now, dim, detailed, compact = false) {
   const window = currentWindow(raw, now);
   const delta = deltaFor(window, seconds, now);
   const color = dim ? COLORS.muted : paceColor(delta);
   const row = parent.addStack();
   row.centerAlignContent();
   const pct = finite(window.pct) ? `${Math.round(window.pct)}%` : "--%";
-  text(row, `${label} ${pct}  ${paceText(delta)}`, detailed ? 12 : 10, color);
+  text(row, `${label} ${pct}  ${paceText(delta)}`, compact ? 9 : detailed ? 12 : 10, color);
   row.addSpacer();
   text(row, remaining(window.resets_at, now), detailed ? 10 : 8, COLORS.muted);
-  parent.addSpacer(2);
+  parent.addSpacer(compact ? 1 : 2);
   const image = parent.addImage(bar(window, seconds, now, color));
-  image.imageSize = new Size(detailed ? 130 : 120, 4);
+  image.imageSize = new Size(detailed ? 130 : 120, compact ? 3 : 4);
   image.resizable = true;
 }
-function addProvider(parent, provider, now, offline, detailed, large) {
+function addProvider(parent, provider, now, offline, detailed, large, compact = false) {
   const cell = parent.addStack();
   cell.layoutVertically();
   const stale = !finite(provider.fetched_at) || now - provider.fetched_at > STALE_SECONDS;
   const dim = offline || stale || !provider.ok;
   const header = cell.addStack();
   const name = provider.name === "Antigravity" ? "AGY" : provider.name;
-  text(header, name, detailed ? 16 : 12, dim ? COLORS.muted : COLORS.text, true);
+  text(header, name, compact ? 11 : detailed ? 16 : 12, dim ? COLORS.muted : COLORS.text, true);
   header.addSpacer();
   if (!provider.ok) text(header, ["token_expired", "unauthorized"].includes(provider.error) ? "要ログイン" : "取得失敗", 8, COLORS.yellow);
   else if (stale) text(header, "古いデータ", 8, COLORS.yellow);
-  cell.addSpacer(detailed ? 8 : 3);
-  addWindow(cell, "5h", provider.five_hour, 18000, now, dim, detailed);
-  cell.addSpacer(detailed ? 7 : 3);
-  addWindow(cell, "7d", provider.seven_day, 604800, now, dim, detailed);
+  cell.addSpacer(compact ? 1 : detailed ? 8 : 3);
+  addWindow(cell, "5h", provider.five_hour, 18000, now, dim, detailed, compact);
+  cell.addSpacer(compact ? 2 : detailed ? 7 : 3);
+  addWindow(cell, "7d", provider.seven_day, 604800, now, dim, detailed, compact);
   if (large) {
     for (const scope of (provider.scoped || []).slice(0, 2)) {
       cell.addSpacer(4);
@@ -136,35 +145,38 @@ function addProvider(parent, provider, now, offline, detailed, large) {
 function renderWidget(result, family, parameter, now) {
   const widget = new ListWidget();
   widget.backgroundColor = new Color("172131");
-  widget.setPadding(10, 12, 10, 12);
-  widget.refreshAfterDate = new Date((now + REFRESH_MINUTES * 60) * 1000);
-  let url = URLScheme.forRunningScript();
-  if (parameter) url += `${url.includes("?") ? "&" : "?"}providers=${encodeURIComponent(parameter)}`;
-  widget.url = url;
   const small = family === "small";
   const large = family === "large" || family === "extraLarge";
-  const providers = selectedProviders(result.data ? result.data.providers : [], parameter);
-  const visible = providers.slice(0, small ? 1 : large ? 6 : 4);
+  widget.setPadding(small ? 8 : 10, small ? 10 : 12, small ? 8 : 10, small ? 10 : 12);
+  widget.refreshAfterDate = new Date((now + REFRESH_MINUTES * 60) * 1000);
+  let url = URLScheme.forRunningScript();
+  url += `${url.includes("?") ? "&" : "?"}family=${encodeURIComponent(family)}`;
+  if (parameter) url += `&providers=${encodeURIComponent(parameter)}`;
+  widget.url = url;
+  const providers = visibleProviders(result.data ? result.data.providers : [], parameter, now);
+  const visible = providers.slice(0, small ? 2 : large ? 6 : 4);
+  const compact = small && visible.length > 1;
   const heading = widget.addStack();
   text(heading, "AI USAGE", 10, COLORS.muted, true);
   heading.addSpacer();
   if (result.offline) text(heading, "接続失敗", 9, COLORS.yellow);
   else if (providers.length > visible.length) text(heading, `+${providers.length - visible.length}`, 9, COLORS.muted);
-  widget.addSpacer(small ? 10 : 5);
+  widget.addSpacer(compact ? 4 : small ? 10 : 5);
   if (!visible.length) {
     text(widget, result.data ? "表示データなし" : "接続できません", 14, COLORS.text, true);
     widget.addSpacer(6);
     text(widget, result.data ? "Parameter・PCのログインを確認" : "Tailscale・PCの起動を確認", 10, COLORS.muted);
   }
-  for (let i = 0; i < visible.length; i += small ? 1 : 2) {
+  const step = small ? 1 : 2;
+  for (let i = 0; i < visible.length; i += step) {
     const row = widget.addStack();
     row.layoutHorizontally();
-    addProvider(row, visible[i], now, result.offline, small, large);
+    addProvider(row, visible[i], now, result.offline, small && !compact, large, compact);
     if (!small) {
       row.addSpacer();
       if (visible[i + 1]) addProvider(row, visible[i + 1], now, result.offline, false, large);
     }
-    if (i + 2 < visible.length) widget.addSpacer(large ? 12 : 7);
+    if (i + step < visible.length) widget.addSpacer(compact ? 5 : large ? 12 : 7);
   }
   widget.addSpacer();
   const footer = widget.addStack();
@@ -181,7 +193,8 @@ function renderWidget(result, family, parameter, now) {
 async function main() {
   const parameter = String(args.widgetParameter || args.queryParameters.providers || "");
   const result = await loadSnapshot();
-  const family = config.widgetFamily || "medium";
+  const requestedFamily = config.widgetFamily || args.queryParameters.family;
+  const family = ["small", "medium", "large", "extraLarge"].includes(requestedFamily) ? requestedFamily : "medium";
   const widget = renderWidget(result, family, parameter, Date.now() / 1000);
   Script.setWidget(widget);
   if (!config.runsInWidget) {
