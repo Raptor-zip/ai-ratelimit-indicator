@@ -31,6 +31,10 @@ One cache file per provider (`claude.json`, `codex.json`, `kimi.json`, `agy.json
 Keeping the network work in a separate process means the GNOME Shell main loop is never
 blocked by an HTTP request.
 
+**iPhone widgets:** [Scriptable + Tailscale setup](docs/scriptable.md) reuses these caches
+through an owner-authenticated, tailnet-only HTTPS API. Install with
+`./scripts/install-scriptable.sh`; no Mac is required.
+
 Where the usage data comes from:
 
 | Provider | Credentials | Endpoint |
@@ -166,6 +170,10 @@ AI CLI のレートリミット（5 時間セッション枠 / 週間枠）の�
 `agy.json`）に書きます。systemd user timer が 2 分ごとに別プロセスとして実行し、
 拡張はそのキャッシュを読むだけなので、GNOME Shell のメインループが HTTP で
 ブロックされることはありません。
+
+**iPhone対応**: [Scriptable + Tailscaleの設定手順](docs/scriptable.md)で、同じキャッシュを
+ホーム画面ウィジェットに表示できます。`./scripts/install-scriptable.sh` でPC側を設定し、
+表示されたHTTPS URLをiPhoneで開いてください。Macは不要です。
 
 データの取得元:
 
