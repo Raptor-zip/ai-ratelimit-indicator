@@ -20,7 +20,7 @@ function harness({data, status = 200, offline = false, cached, writeFails = fals
     addStack() {return new Stack();}
     addText(value) {labels.push(value); return {};}
     addDate(value) {dates.push(value); return {applyRelativeStyle() {}};}
-    addImage() {const image = {}; images.push(image); return image;}
+    addImage(source) {const image = {source, leftAlignImage() {this.alignment = 'left';}}; images.push(image); return image;}
     addSpacer() {}
     setPadding() {}
     centerAlignContent() {}
@@ -30,11 +30,12 @@ function harness({data, status = 200, offline = false, cached, writeFails = fals
   class DrawContext {
     setFillColor() {}
     fillRect() {}
-    getImage() {return {};}
+    getImage() {return {size: this.size};}
   }
   const context = vm.createContext({
     console: {log() {}}, ListWidget: Stack, DrawContext,
-    Color: class {}, Size: class {}, Rect: class {},
+    Color: class {}, Size: class {constructor(width, height) {this.width = width; this.height = height;}}, Rect: class {},
+    LinearGradient: class {}, Point: class {}, Device: {screenSize: () => ({width: 390, height: 844})},
     Font: {boldSystemFont() {}, systemFont() {}},
     URLScheme: {forRunningScript: () => 'scriptable:///run?scriptName=AI%20Usage'},
     FileManager: {local: () => ({documentsDirectory: () => '/cache',
@@ -47,7 +48,7 @@ function harness({data, status = 200, offline = false, cached, writeFails = fals
     },
   });
   vm.runInContext(source.replace(/await main\(\);\s*$/, '') +
-    '\nglobalThis.api = {currentWindow, deltaFor, selectedProviders, visibleProviders, loadSnapshot, renderWidget};', context);
+    '\nglobalThis.api = {currentWindow, deltaFor, selectedProviders, visibleProviders, availableWindows, loadSnapshot, renderWidget};', context);
   return {api: context.api, labels, images, dates, stored: () => stored};
 }
 
@@ -130,23 +131,50 @@ test('optional providers hide failed, stale, missing and expired usage; zero is 
 });
 
 test('unavailable optional providers do not consume medium cells or age the footer', () => {
-  const {api, labels, images, dates} = harness();
+  const {api, labels, images} = harness();
   api.renderWidget({data: {providers: [provider('claude'), provider('codex'),
     provider('kimi', {five_hour: null, seven_day: null}),
     provider('agy', {ok: false, fetched_at: now - 90000})]}, offline: false}, 'medium', '', now);
   assert.equal(labels.includes('kimi'), false);
   assert.equal(labels.includes('agy'), false);
   assert.equal(images.length, 4);
-  assert.equal(dates[0].getTime(), (now - 120) * 1000);
+  const updated = new Date((now - 120) * 1000);
+  const clock = `${String(updated.getHours()).padStart(2, '0')}:${String(updated.getMinutes()).padStart(2, '0')}`;
+  assert.ok(labels.includes(`更新 ${clock}`));
 });
 
 test('offline, stale, expired-token and empty states remain distinguishable', () => {
   const {api, labels} = harness();
   api.renderWidget({data: {providers: [provider('claude', {ok: false, error: 'token_expired', fetched_at: now - 90000})]}, offline: true}, 'small', '', now);
-  assert.ok(labels.includes('接続失敗'));
-  assert.ok(labels.includes('要ログイン'));
+  assert.ok(labels.some(label => label.startsWith('接続失敗')));
+  assert.ok(labels.includes('認証切れ'));
   api.renderWidget({data: null, offline: true}, 'medium', '', now);
   assert.ok(labels.includes('接続できません'));
   api.renderWidget({data: {providers: [provider('codex', {fetched_at: now - 1000})]}, offline: false}, 'medium', '', now);
   assert.ok(labels.includes('古いデータ'));
+});
+
+test('graph rendering preserves aspect ratio and aligns with its text column', () => {
+  for (const family of ['small', 'medium', 'large']) {
+    const {api, images} = harness();
+    api.renderWidget({data: {providers: [provider('claude'), provider('codex')]}, offline: false}, family, '', now);
+    for (const image of images) {
+      assert.equal(image.imageSize.width / image.imageSize.height, image.source.size.width / image.source.size.height);
+      assert.equal(image.alignment, 'left');
+    }
+  }
+});
+
+test('small widget omits missing and inactive windows instead of rendering empty tracks', () => {
+  const {api, images, labels} = harness();
+  api.renderWidget({data: {providers: [
+    provider('claude', {five_hour: {pct: 0, resets_at: null}}),
+    provider('codex', {five_hour: {pct: null, resets_at: null}}),
+  ]}, offline: false}, 'small', '', now);
+  assert.equal(images.length, 2);
+  assert.ok(labels.includes('claude'));
+  assert.ok(labels.includes('codex'));
+  assert.equal(labels.includes('AI Usage'), false);
+  assert.equal(labels.includes('--%'), false);
+  assert.equal(labels.includes('5h'), false);
 });
