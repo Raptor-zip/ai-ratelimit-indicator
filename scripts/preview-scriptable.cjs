@@ -40,12 +40,13 @@ class DrawContext {
     const anchor = this.align === 'right' ? 'end' : this.align === 'center' ? 'middle' : 'start';
     this.elements.push(`<text x="${x}" y="${r.y + this.font.size * 0.94}" fill="${this.textColor}" font-family="-apple-system,BlinkMacSystemFont,Arial,sans-serif" font-size="${this.font.size}" font-weight="${this.font.weight}" text-anchor="${anchor}">${escape(value)}</text>`);
   }
-  getImage() {return {size: this.size, texts: this.texts, icons: this.icons,
+  getImage() {return {size: this.size, opaque: this.opaque, texts: this.texts, icons: this.icons,
     svg: `<svg xmlns="http://www.w3.org/2000/svg" width="${this.size.width}" height="${this.size.height}" viewBox="0 0 ${this.size.width} ${this.size.height}"><defs><clipPath id="frame"><rect width="${this.size.width}" height="${this.size.height}" rx="24"/></clipPath></defs><g clip-path="url(#frame)">${this.elements.join('')}</g></svg>`};}
 }
 class ListWidget {
   constructor() {this.images = [];}
   setPadding() {}
+  addSpacer() {}
   addImage(source) {const image = {source, leftAlignImage() {this.alignment = 'left';}}; this.images.push(image); return image;}
 }
 const source = fs.readFileSync(path.join(__dirname, '../scriptable/AI-Usage.js'), 'utf8').replace(/await main\(\);\s*$/, '');

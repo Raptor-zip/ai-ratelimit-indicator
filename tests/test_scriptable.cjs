@@ -67,14 +67,18 @@ test('optional providers hide failed, stale, missing and expired usage; zero is 
     assert.equal(api.visibleProviders([provider(id, {five_hour: null, seven_day: {pct: 0}})], '', now).length, 1);
   }
 });
-test('all sizes keep tap selection and preserve the source image aspect ratio', () => {
+test('all sizes use an opaque full-bleed background instead of a fixed-size content image', () => {
   const api = runtime();
   for (const family of ['small', 'medium', 'large']) {
     const widget = api.renderWidget({data: {providers: [provider(), provider('codex')]}, offline: false}, family, 'codex,claude', now);
     assert.match(widget.url, /providers=codex%2Cclaude/);
     assert.match(widget.url, new RegExp(`family=${family}`));
-    const image = widget.images[0];
-    assert.equal(image.imageSize.width / image.imageSize.height, image.source.size.width / image.source.size.height);
+    assert.equal(widget.images.length, 0);
+    assert.ok(widget.backgroundImage);
+    assert.equal(widget.backgroundImage.opaque, true);
+    assert.ok(widget.backgroundImage.svg.includes('x="0" y="0"'));
+    // No second outer frame; rounded borders belong only to the inner cards.
+    assert.equal(widget.backgroundImage.svg.includes('M24.5,0.5'), false);
   }
 });
 test('small card design includes both brand icons, percentages and actual remaining capacity', () => {

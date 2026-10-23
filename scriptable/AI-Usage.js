@@ -304,11 +304,12 @@ function drawScene(result, family, parameter, now) {
   const providers = visibleProviders(result.data ? result.data.providers : [], parameter, now);
   const visible = providers.slice(0, large ? 3 : 2);
   const ctx = new DrawContext();
-  ctx.size = size; ctx.opaque = false; ctx.respectScreenScale = true;
-  gradient(ctx, 0, 0, size.width, size.height, 24, "28374f", "131b30");
+  // Paint through every edge. WidgetKit supplies the actual container mask;
+  // baked-in rounded corners expose a second background when sizes differ.
+  ctx.size = size; ctx.opaque = true; ctx.respectScreenScale = true;
+  gradient(ctx, 0, 0, size.width, size.height, 0, "28374f", "131b30");
   glow(ctx, size.width * 0.05, size.height * 0.92, size.width * 0.52, "48e5ea", 0.10);
   glow(ctx, size.width * 0.98, size.height * 0.94, size.width * 0.55, "9b71ff", 0.14);
-  rounded(ctx, 0.5, 0.5, size.width - 1, size.height - 1, 24, "c5dcff", 0.45, 0.7);
   const headerY = small ? 12 : 11;
   drawText(ctx, small ? "AI" : "AI 利用状況", 12, headerY, small ? 25 : 130, 19, small ? 11 : 13, COLORS.text, true);
   const updated = result.offline ? "接続失敗" : clockLabel(visible, now);
@@ -344,10 +345,10 @@ function renderWidget(result, family, parameter, now) {
   url += `${url.includes("?") ? "&" : "?"}family=${encodeURIComponent(family)}`;
   if (parameter) url += `&providers=${encodeURIComponent(parameter)}`;
   widget.url = url;
-  const image = widget.addImage(drawScene(result, family, parameter, now));
-  image.imageSize = widgetSize(family);
-  image.resizable = true;
-  image.leftAlignImage();
+  // A background fills the real widget bounds; an explicitly sized image is
+  // fitted as content and can leave gutters on different devices / zoom modes.
+  widget.backgroundImage = drawScene(result, family, parameter, now);
+  widget.addSpacer();
   return widget;
 }
 async function main() {
