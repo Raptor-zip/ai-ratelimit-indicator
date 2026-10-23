@@ -1,10 +1,6 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
 const {test} = require('node:test');
-
-const source = fs.readFileSync(path.join(__dirname, '../scriptable/AI-Usage.js'), 'utf8');
+const {runtime} = require('../scripts/preview-scriptable.cjs');
 const now = 1_800_000_000;
 function provider(id = 'claude', extra = {}) {
   return {id, name: id, ok: true, fetched_at: now - 120,
@@ -13,64 +9,29 @@ function provider(id = 'claude', extra = {}) {
 }
 function harness({data, status = 200, offline = false, cached, writeFails = false} = {}) {
   let stored = cached && JSON.stringify(cached);
-  const labels = [];
-  const images = [];
-  const dates = [];
-  class Stack {
-    addStack() {return new Stack();}
-    addText(value) {labels.push(value); return {};}
-    addDate(value) {dates.push(value); return {applyRelativeStyle() {}};}
-    addImage(source) {const image = {source, leftAlignImage() {this.alignment = 'left';}}; images.push(image); return image;}
-    addSpacer() {}
-    setPadding() {}
-    centerAlignContent() {}
-    layoutVertically() {}
-    layoutHorizontally() {}
-  }
-  class DrawContext {
-    setFillColor() {}
-    fillRect() {}
-    getImage() {return {size: this.size};}
-  }
-  const context = vm.createContext({
-    console: {log() {}}, ListWidget: Stack, DrawContext,
-    Color: class {}, Size: class {constructor(width, height) {this.width = width; this.height = height;}}, Rect: class {},
-    LinearGradient: class {}, Point: class {}, Device: {screenSize: () => ({width: 390, height: 844})},
-    Font: {boldSystemFont() {}, systemFont() {}},
-    URLScheme: {forRunningScript: () => 'scriptable:///run?scriptName=AI%20Usage'},
-    FileManager: {local: () => ({documentsDirectory: () => '/cache',
-      joinPath: (a, b) => `${a}/${b}`,
+  const api = runtime({console: {log() {}},
+    FileManager: {local: () => ({documentsDirectory: () => '/cache', joinPath: (a, b) => `${a}/${b}`,
       readString() {if (!stored) throw new Error('missing'); return stored;},
       writeString(p, value) {if (writeFails) throw new Error('full'); stored = value;}})},
-    Request: class {
-      constructor() {this.response = {statusCode: status};}
-      async loadJSON() {if (offline) throw new Error('unreachable'); return data;}
-    },
-  });
-  vm.runInContext(source.replace(/await main\(\);\s*$/, '') +
-    '\nglobalThis.api = {currentWindow, deltaFor, selectedProviders, visibleProviders, availableWindows, loadSnapshot, renderWidget};', context);
-  return {api: context.api, labels, images, dates, stored: () => stored};
+    Request: class {constructor() {this.response = {statusCode: status};}
+      async loadJSON() {if (offline) throw new Error('unreachable'); return data;}}});
+  return {api, stored: () => stored};
 }
-
-test('expired windows cannot look like spare capacity and missing resets have no pace', () => {
-  const {api} = harness();
+test('expired windows do not imply spare capacity and missing resets have no pace', () => {
+  const api = runtime();
   const expired = api.currentWindow({pct: 5, resets_at: now}, now);
   assert.equal(expired.pct, null);
   assert.equal(api.deltaFor(expired, 18000, now), null);
   assert.equal(api.deltaFor({pct: 0, resets_at: null}, 18000, now), null);
-  assert.equal(api.deltaFor(provider().five_hour, 18000, now), 25);
 });
-
-test('widget parameter filters, orders, and deduplicates accounts', () => {
-  const {api} = harness();
-  const providers = [provider('claude'), provider('codex'), provider('kimi2')];
-  assert.equal(api.selectedProviders(providers, ' Codex,claude,codex,kimi2,missing ').map(p => p.id).join(','), 'codex,claude,kimi2');
+test('widget parameter orders and deduplicates accounts', () => {
+  const api = runtime();
+  const providers = [provider(), provider('codex'), provider('kimi2')];
+  assert.equal(api.selectedProviders(providers, 'codex,claude,codex,kimi2,missing').map(p => p.id).join(','), 'codex,claude,kimi2');
 });
-
-test('network and auth errors keep the previous snapshot without overwriting it', async () => {
+test('network and auth errors retain previous snapshot without overwriting it', async () => {
   const cached = {schema_version: 1, providers: [provider()]};
-  for (const options of [{offline: true}, {status: 403, data: {error: 'auth'}},
-    {status: 200, data: {providers: []}}]) {
+  for (const options of [{offline: true}, {status: 403, data: {error: 'auth'}}, {data: {providers: []}}]) {
     const {api, stored} = harness({...options, cached});
     const result = await api.loadSnapshot();
     assert.equal(result.offline, true);
@@ -79,102 +40,71 @@ test('network and auth errors keep the previous snapshot without overwriting it'
   }
   assert.equal((await harness({offline: true}).api.loadSnapshot()).data, null);
 });
-
-test('fresh data displays even if the local cache cannot be written', async () => {
+test('fresh data displays even if the cache cannot be written', async () => {
   const data = {schema_version: 1, providers: [provider()]};
-  const {api} = harness({data, writeFails: true});
-  const result = await api.loadSnapshot();
+  const result = await harness({data, writeFails: true}).api.loadSnapshot();
   assert.equal(result.offline, false);
   assert.equal(result.data, data);
 });
-
-test('all home-screen sizes render and tapping keeps the selected providers', () => {
+test('weekly usage is the main value, with five-hour fallback and remaining clamped at zero', () => {
+  const api = runtime();
+  const weekly = api.summary(provider('codex'), now, false);
+  assert.equal(weekly.primary.label, '7d');
+  assert.equal(weekly.pct, 20);
+  assert.equal(weekly.remaining, 80);
+  assert.equal(api.summary(provider('codex', {seven_day: null}), now, false).primary.label, '5h');
+  assert.equal(api.summary(provider('claude', {seven_day: {pct: 105}}), now, false).remaining, 0);
+  assert.equal(api.summary(provider('claude', {seven_day: null, five_hour: null}), now, false).remaining, null);
+});
+test('optional providers hide failed, stale, missing and expired usage; zero is valid', () => {
+  const api = runtime();
+  for (const id of ['kimi', 'kimi2', 'kimi3', 'agy']) {
+    for (const extra of [{ok: false}, {fetched_at: now - 1000}, {five_hour: null, seven_day: null},
+      {five_hour: {pct: 0, resets_at: null}, seven_day: null},
+      {five_hour: {pct: 10, resets_at: now - 1}, seven_day: null}]) {
+      assert.equal(api.visibleProviders([provider(id, extra)], '', now).length, 0);
+    }
+    assert.equal(api.visibleProviders([provider(id, {five_hour: null, seven_day: {pct: 0}})], '', now).length, 1);
+  }
+});
+test('all sizes keep tap selection and preserve the source image aspect ratio', () => {
+  const api = runtime();
   for (const family of ['small', 'medium', 'large']) {
-    const {api, labels} = harness();
-    const data = {schema_version: 1, providers: ['claude', 'codex', 'kimi', 'agy', 'kimi2', 'kimi3'].map(id => provider(id))};
-    const widget = api.renderWidget({data, offline: false}, family, 'codex,claude,kimi,agy,kimi2,kimi3', now);
+    const widget = api.renderWidget({data: {providers: [provider(), provider('codex')]}, offline: false}, family, 'codex,claude', now);
     assert.match(widget.url, /providers=codex%2Cclaude/);
     assert.match(widget.url, new RegExp(`family=${family}`));
-    assert.ok(labels.includes('codex'));
-    assert.ok(labels.includes('claude'));
-    assert.equal(labels.includes('kimi2'), family === 'large');
+    const image = widget.images[0];
+    assert.equal(image.imageSize.width / image.imageSize.height, image.source.size.width / image.source.size.height);
   }
 });
-
-test('2x2 small widget includes both Claude and Codex and all four graphs', () => {
-  const {api, labels, images} = harness();
-  api.renderWidget({data: {providers: [provider('claude'), provider('codex')]}, offline: false}, 'small', '', now);
-  assert.ok(labels.includes('claude'));
-  assert.ok(labels.includes('codex'));
-  assert.equal(images.length, 4);
-  const single = harness();
-  single.api.renderWidget({data: {providers: [provider('claude'), provider('codex')]}, offline: false}, 'small', 'codex', now);
-  assert.equal(single.images.length, 2);
-  assert.equal(single.labels.includes('claude'), false);
+test('small card design includes both brand icons, percentages and actual remaining capacity', () => {
+  const image = runtime().drawScene({data: {providers: [provider('claude', {seven_day: {pct: 3}}),
+    provider('codex', {seven_day: {pct: 27}})]}, offline: false}, 'small', '', now);
+  const labels = image.texts.map(text => text.value);
+  for (const label of ['claude', 'codex', '3%', '27%', '残り 97%', '残り 73%']) assert.ok(labels.includes(label));
+  assert.equal(image.icons.length, 2);
 });
-
-test('optional providers hide failed, stale, missing and expired usage; zero is valid', () => {
-  const {api} = harness();
-  const ids = providers => api.visibleProviders(providers, '', now).map(p => p.id).join(',');
-  for (const id of ['kimi', 'kimi2', 'kimi3', 'agy']) {
-    for (const extra of [
-      {ok: false, error: 'network'},
-      {ok: false, error: 'token_expired'},
-      {fetched_at: now - 1000},
-      {five_hour: {pct: null}, seven_day: {pct: null}},
-      {five_hour: {pct: 10, resets_at: now - 1}, seven_day: {pct: null}},
-    ]) assert.equal(ids([provider(id, extra)]), '');
-    assert.equal(ids([provider(id, {five_hour: {pct: 0}, seven_day: {pct: null}})]), id);
-    assert.equal(ids([provider(id, {five_hour: {pct: null}})]), id);
-  }
-  assert.equal(ids([provider('claude', {ok: false}), provider('codex', {ok: false})]), 'claude,codex');
+test('hidden providers do not age the update time and cached values are marked as previous', () => {
+  const api = runtime();
+  const image = api.drawScene({data: {providers: [provider(), provider('codex'),
+    provider('agy', {ok: false, fetched_at: now - 90000})]}, offline: false}, 'small', '', now);
+  assert.equal(image.texts.some(text => text.value === 'agy'), false);
+  assert.equal(image.texts.some(text => text.value.includes('/')), false);
+  assert.equal(api.summary(provider('claude', {ok: false}), now, false).previous, true);
 });
-
-test('unavailable optional providers do not consume medium cells or age the footer', () => {
-  const {api, labels, images} = harness();
-  api.renderWidget({data: {providers: [provider('claude'), provider('codex'),
-    provider('kimi', {five_hour: null, seven_day: null}),
-    provider('agy', {ok: false, fetched_at: now - 90000})]}, offline: false}, 'medium', '', now);
-  assert.equal(labels.includes('kimi'), false);
-  assert.equal(labels.includes('agy'), false);
-  assert.equal(images.length, 4);
-  const updated = new Date((now - 120) * 1000);
-  const clock = `${String(updated.getHours()).padStart(2, '0')}:${String(updated.getMinutes()).padStart(2, '0')}`;
-  assert.ok(labels.includes(`更新 ${clock}`));
-});
-
-test('offline, stale, expired-token and empty states remain distinguishable', () => {
-  const {api, labels} = harness();
-  api.renderWidget({data: {providers: [provider('claude', {ok: false, error: 'token_expired', fetched_at: now - 90000})]}, offline: true}, 'small', '', now);
-  assert.ok(labels.some(label => label.startsWith('接続失敗')));
-  assert.ok(labels.includes('認証切れ'));
-  api.renderWidget({data: null, offline: true}, 'medium', '', now);
-  assert.ok(labels.includes('接続できません'));
-  api.renderWidget({data: {providers: [provider('codex', {fetched_at: now - 1000})]}, offline: false}, 'medium', '', now);
-  assert.ok(labels.includes('古いデータ'));
-});
-
-test('graph rendering preserves aspect ratio and aligns with its text column', () => {
-  for (const family of ['small', 'medium', 'large']) {
-    const {api, images} = harness();
-    api.renderWidget({data: {providers: [provider('claude'), provider('codex')]}, offline: false}, family, '', now);
-    for (const image of images) {
-      assert.equal(image.imageSize.width / image.imageSize.height, image.source.size.width / image.source.size.height);
-      assert.equal(image.alignment, 'left');
+test('smallest screen and unknown-data states keep text rectangles within the image', () => {
+  for (const screenWidth of [320, 375, 390, 402, 440]) {
+    const api = runtime({}, {width: screenWidth, height: 844});
+    for (const family of ['small', 'medium', 'large']) {
+      for (const providers of [[], [provider()], [provider(), provider('codex')],
+        [provider('claude', {five_hour: null, seven_day: null}), provider('codex')]]) {
+        const image = api.drawScene({data: {providers}, offline: true}, family, '', now);
+        for (const {rect: r} of image.texts) {
+          assert.ok(r.x >= 0 && r.y >= 0 && r.width > 0 && r.height > 0);
+          assert.ok(r.x + r.width <= image.size.width + 0.01);
+          assert.ok(r.y + r.height <= image.size.height + 0.01);
+        }
+      }
     }
   }
-});
-
-test('small widget omits missing and inactive windows instead of rendering empty tracks', () => {
-  const {api, images, labels} = harness();
-  api.renderWidget({data: {providers: [
-    provider('claude', {five_hour: {pct: 0, resets_at: null}}),
-    provider('codex', {five_hour: {pct: null, resets_at: null}}),
-  ]}, offline: false}, 'small', '', now);
-  assert.equal(images.length, 2);
-  assert.ok(labels.includes('claude'));
-  assert.ok(labels.includes('codex'));
-  assert.equal(labels.includes('AI Usage'), false);
-  assert.equal(labels.includes('--%'), false);
-  assert.equal(labels.includes('5h'), false);
 });

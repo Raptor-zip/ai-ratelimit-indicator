@@ -19,7 +19,7 @@ for address, site in json.load(sys.stdin).get("Web", {}).items():
 '
     tailscale serve --https="$TS_PORT" off
     systemctl --user disable --now ai-usage-api.service
-    rm -f "$UNIT_DIR/ai-usage-api.service" "$BIN_DIR/ai-usage-serve" "$DATA_DIR/AI-Usage.js"
+    rm -f "$UNIT_DIR/ai-usage-api.service" "$BIN_DIR/ai-usage-serve" "$DATA_DIR/AI-Usage.js" "$DATA_DIR/preview.png"
     systemctl --user daemon-reload
     exit 0
 fi
@@ -61,6 +61,7 @@ if data.get("AllowFunnel", {}).get(sys.argv[1] + ":8445"):
 mkdir -p "$BIN_DIR" "$DATA_DIR" "$UNIT_DIR"
 install -m 755 "$SRC/bin/ai-usage-serve.py" "$BIN_DIR/ai-usage-serve"
 install -m 644 "$SRC/scriptable/AI-Usage.js" "$DATA_DIR/AI-Usage.js"
+install -m 644 "$SRC/docs/scriptable-preview.png" "$DATA_DIR/preview.png"
 cat > "$UNIT_DIR/ai-usage-api.service" <<EOF
 [Unit]
 Description=AI usage cache API for Scriptable over Tailscale Serve

@@ -21,9 +21,11 @@ class UsageApiTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.cache = Path(self.tmp.name)
+        self.script = self.cache / "AI-Usage.js"
+        self.script.write_text((ROOT / "scriptable/AI-Usage.js").read_text())
         self.public = "https://test.example.ts.net:8445"
         handler = partial(API.Handler, cache_dir=self.cache,
-                          script_path=ROOT / "scriptable/AI-Usage.js",
+                          script_path=self.script,
                           public_url=self.public, owner="owner@example.com")
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -40,7 +42,7 @@ class UsageApiTest(unittest.TestCase):
     def write(self, name, value):
         (self.cache / f"{name}.json").write_text(json.dumps(value))
 
-    def get(self, path="/api/usage", headers=None):
+    def get(self, path="/api/usage", headers=None, binary=False):
         request = urllib.request.Request(
             f"http://127.0.0.1:{self.server.server_port}{path}",
             headers=self.headers if headers is None else headers)
@@ -49,7 +51,8 @@ class UsageApiTest(unittest.TestCase):
         except urllib.error.HTTPError as error:
             response = error
         with response:
-            return response.status, response.headers, response.read().decode()
+            body = response.read()
+            return response.status, response.headers, body if binary else body.decode()
 
     def test_authentication_fails_closed(self):
         for changes in ({"Tailscale-User-Login": ""},
@@ -94,6 +97,17 @@ class UsageApiTest(unittest.TestCase):
         self.assertIn(f'const BASE_URL = "{self.public}";', script)
         self.assertNotIn("__AI_USAGE_BASE_URL__", script)
         self.assertIn("スクリプトをコピー", self.get("/")[2])
+
+    def test_preview_is_a_fixed_authenticated_binary_asset(self):
+        self.assertEqual(self.get("/preview.png")[0], 404)
+        png = b"\x89PNG\r\n\x1a\npreview"
+        (self.cache / "preview.png").write_bytes(png)
+        status, headers, body = self.get("/preview.png", binary=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertEqual(body, png)
+        self.assertEqual(self.get("/preview.png", headers={})[0], 403)
 
 
 if __name__ == "__main__":

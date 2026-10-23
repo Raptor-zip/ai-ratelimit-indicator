@@ -90,9 +90,9 @@ class Handler(BaseHTTPRequestHandler):
         super().__init__(*args, **kwargs)
 
     def reply(self, status, body, content_type="application/json; charset=utf-8"):
-        if not isinstance(body, str):
+        if not isinstance(body, (str, bytes)):
             body = json.dumps(body, ensure_ascii=False, allow_nan=False)
-        encoded = body.encode("utf-8")
+        encoded = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(encoded)))
@@ -127,6 +127,12 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, snapshot(self.cache_dir))
         elif path == "/AI-Usage.js":
             self.reply(200, self.widget_script(), "text/javascript; charset=utf-8")
+        elif path == "/preview.png":
+            preview = self.script_path.with_name("preview.png")
+            if preview.is_file():
+                self.reply(200, preview.read_bytes(), "image/png")
+            else:
+                self.reply(404, {"error": "preview_not_installed"})
         elif path == "/":
             source = html.escape(self.widget_script())
             self.reply(200, """<!doctype html><html lang="ja"><meta charset="utf-8">
@@ -147,6 +153,7 @@ textarea{width:100%;height:180px;box-sizing:border-box;margin-top:16px}</style>
 Kimi・AGYは、正常に取得した有効な使用率がある場合だけ表示します。</p>
 <p>タップで再取得。PCの取得間隔は約2分、ウィジェットの自動更新時刻はiOSが決めます。
 接続失敗時は保存したデータを表示します。</p>
+<p><a href="preview.png">ウィジェットのデザインを見る</a>（確認用のサンプル値・フォントは実機と異なります）</p>
 <a href="AI-Usage.js">.jsファイルを保存</a> · <a href="api/usage">接続確認（JSON）</a>
 <textarea id="source" readonly aria-label="Scriptable用スクリプト">""" + source + """</textarea>
 <script>document.getElementById('copy').onclick=async()=>{
