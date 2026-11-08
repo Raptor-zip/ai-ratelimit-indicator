@@ -5,12 +5,16 @@ const vm = require('node:vm');
 const {test} = require('node:test');
 
 const now = 1_800_000_000;
+class Actor { add_child() {} set_position() {} }
 const context = vm.createContext({
+    global: {stage: {}},
     Date: class extends Date { static now() { return now * 1000; } },
     imports: {
         gi: {
             GLib: {build_filenamev: parts => parts.join('/'), get_home_dir: () => '', get_user_cache_dir: () => ''},
             GObject: {registerClass: cls => cls},
+            Clutter: {ActorAlign: {}, FixedLayout: class {}},
+            St: {BoxLayout: Actor, Label: Actor, Widget: Actor, ThemeContext: {get_for_stage: () => ({scale_factor: 1})}},
         },
         ui: {main: {}, panelMenu: {Button: class {}}, popupMenu: {}},
         misc: {extensionUtils: {getCurrentExtension: () => ({})}},
@@ -93,12 +97,7 @@ test('forecast line distinguishes running out from outlasting the window', () =>
 
 test('scoped bar rows are inserted above the sub line and forecast', () => {
     const calls = [];
-    const stub = () => function () { return {add_child() {}}; };
-    const gi = context.imports.gi;
-    gi.St = {BoxLayout: stub(), Label: stub()};
-    gi.Clutter = {ActorAlign: {}};
     const sandbox = {_sub: 'sub', box: {insert_child_below: (row, sibling) => calls.push(sibling), add_child: () => calls.push('end')}};
-    vm.runInContext('St = imports.gi.St; Clutter = imports.gi.Clutter; MiniBar = class { get actor() { return {}; } };', context);
     ProviderCell.prototype._makeBarRow.call(sandbox, '', 0);
     assert.deepEqual(calls, ['sub']);
 });
