@@ -17,8 +17,8 @@ const context = vm.createContext({
     },
 });
 const source = fs.readFileSync(path.join(__dirname, '../extension/ai-ratelimit@raptor-zip.github.io/extension.js'), 'utf8');
-vm.runInContext(source + '\nglobalThis.api = {idealUsagePct, paceDelta, formatPace, paceClass, ProviderCell, AiIndicator};', context);
-const {idealUsagePct, paceDelta, formatPace, paceClass, ProviderCell, AiIndicator} = context.api;
+vm.runInContext(source + '\nglobalThis.api = {idealUsagePct, paceDelta, formatPace, paceClass, ProviderCell, AiIndicator, forecastLine, forecastLabel};', context);
+const {idealUsagePct, paceDelta, formatPace, paceClass, ProviderCell, AiIndicator, forecastLine, forecastLabel} = context.api;
 
 test('equal usage has opposite pace meaning early and late in a window', () => {
     for (const window of [18000, 604800]) {
@@ -72,4 +72,21 @@ test('logging out hides retained successful data', () => {
         five_hour: {pct: 25, resets_at: now + 9000},
     }), null);
     assert.equal(cell.box.visible, false);
+});
+
+test('forecast line distinguishes running out from outlasting the window', () => {
+    const line = (limitAt, resetsAt) => forecastLine('5h', {forecast: {limit_at: limitAt}, resets_at: resetsAt});
+    assert.equal(forecastLine('5h', {pct: 10}), null);
+    assert.equal(line(now + 3600, now - 1), null);
+    assert.equal(line(now + 7200, now + 3600).reaches, false);
+    assert.match(line(now + 7200, now + 3600).text, /リセットまで持つ/);
+    const reaches = line(now + 4200, now + 7200);
+    assert.equal(reaches.reaches, true);
+    assert.match(reaches.text, /^5h 上限 .*（あと1時間10分）$/);
+    assert.equal(line(now - 10, now + 7200).text, '5h まもなく上限');
+    assert.equal(line(now + 4200, null).reaches, true);
+    assert.equal(line(now + 59, now + 7200).text, '5h まもなく上限');
+    assert.equal(forecastLabel('Claude/GPT 5h', 16), 'Claude/GPT 5h');
+    assert.equal(forecastLabel('GPT-5.3-Codex-Spark 7d', 16), 'GPT-5.3-Code… 7d');
+    assert.equal(forecastLabel('Fable', 16), 'Fable');
 });

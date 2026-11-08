@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import ssl
@@ -53,6 +54,13 @@ AGY_QUOTA_URLS = [
 ]
 AGY_KEYRING_ATTRS = {"service": "gemini", "username": "antigravity"}
 
+# 上限到達予測: 直近の履歴から、5 分以上かつ 2pt 以上の増加が見える最短区間で速度を求める
+FORECAST_MIN_SECONDS = 5 * 60
+FORECAST_MIN_GROWTH = 2.0  # API の値は 1% 刻みのことがあるので 1pt では速度が定まらない
+FORECAST_MAX_SECONDS = 60 * 60  # これより古い増加は「今の速度」として使わない
+HISTORY_MIN_SPACING = 30  # 手動更新の連打で履歴が膨らまないよう、これより近い点は置き換える
+RESET_JUMP_SECONDS = 10 * 60  # resets_at がこれ以上動いたら別の枠とみなす
+
 
 class FetchError(Exception):
     """provider, kind, message を保持する取得失敗。"""
@@ -72,9 +80,10 @@ def cache_path(provider: str) -> Path:
 def load_previous(provider: str) -> dict:
     try:
         with cache_path(provider).open(encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except Exception:
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def write_cache(provider: str, payload: dict) -> None:
@@ -584,8 +593,105 @@ PROVIDERS = {
 ALL_PROVIDER_NAMES = ["claude", "codex", "kimi", "agy"]
 
 
+def is_number(value) -> bool:
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def same_series(older: list, newer: list) -> bool:
+    """隣り合う 2 点の間にリセットがないとき True。"""
+    if older[1] > newer[1]:
+        return False
+    return (older[2] is None or newer[2] is None
+            or abs(older[2] - newer[2]) <= RESET_JUMP_SECONDS)
+
+
+def plateau_start(samples: list, index: int, oldest_at: float) -> float:
+    """samples[index] と同じ値が最初に現れた時刻（値が切り替わった時点）を返す。"""
+    while (index > 0 and samples[index - 1][1] == samples[index][1]
+           and samples[index - 1][0] >= oldest_at
+           and same_series(samples[index - 1], samples[index])):
+        index -= 1
+    return samples[index][0]
+
+
+def forecast_limit(samples: list) -> dict | None:
+    """[時刻, 使用率, リセット時刻] の昇順リストから上限到達時刻を予測する。
+
+    リセットをまたいだ区間は速度に使わない。増加が小さければ None を返す。
+    """
+    latest_at, latest_pct, _ = samples[-1]
+    if latest_pct >= 100:
+        return None
+    for i in range(len(samples) - 1, 0, -1):
+        older, newer = samples[i - 1], samples[i]
+        if not same_series(older, newer):
+            return None
+        elapsed = latest_at - older[0]
+        if elapsed > FORECAST_MAX_SECONDS:
+            return None
+        growth = latest_pct - older[1]
+        if elapsed >= FORECAST_MIN_SECONDS and growth >= FORECAST_MIN_GROWTH:
+            # 値は刻みで増えるので、切り替わった時点どうしで測らないと速度が過大になる。
+            # ただし最後の切り替わり以降に増えていない時間の分は速度を下げる。
+            oldest_at = latest_at - FORECAST_MAX_SECONDS
+            latest_step = plateau_start(samples, len(samples) - 1, oldest_at)
+            span = max(latest_step - plateau_start(samples, i - 1, oldest_at),
+                       growth * (latest_at - latest_step))
+            per_second = growth / span
+            return {
+                "limit_at": latest_at + (100.0 - latest_pct) / per_second,
+                "pct_per_hour": per_second * 3600.0,
+                "basis_seconds": span,
+            }
+    return None
+
+
+def usage_windows(data: dict):
+    """履歴を持つ使用率枠を (系列キー, 枠) で列挙する。"""
+    yield "five_hour", data["five_hour"]
+    yield "seven_day", data["seven_day"]
+    for item in data.get("scoped") or []:
+        yield f"scoped:{item.get('label')}", item
+
+
+def valid_samples(raw) -> list:
+    """前回キャッシュの履歴を、壊れた行を除いて読む。"""
+    if not isinstance(raw, list):
+        return []
+    return [
+        list(s) for s in raw
+        if isinstance(s, list) and len(s) == 3 and is_number(s[0]) and is_number(s[1])
+        and (s[2] is None or is_number(s[2]))
+    ]
+
+
+def apply_forecasts(data: dict, previous: dict, now: float) -> None:
+    """履歴に今回の値を足し、各枠へ予測を書き込む。"""
+    # Kimi は表示スロットの持ち主が変わることがあるので、別アカウントの履歴は引き継がない
+    same_owner = previous.get("account") == data.get("account")
+    old = previous.get("history") if same_owner else None
+    old = old if isinstance(old, dict) else {}
+
+    history = {}
+    for key, window in usage_windows(data):
+        pct = window.get("pct")
+        if not is_number(pct):
+            continue
+        samples = [s for s in valid_samples(old.get(key)) if s[0] < now
+                   and now - s[0] <= FORECAST_MAX_SECONDS + HISTORY_MIN_SPACING]
+        if samples and now - samples[-1][0] < HISTORY_MIN_SPACING:
+            samples.pop()
+        samples.append([now, pct, window.get("resets_at")])
+        history[key] = samples
+        forecast = forecast_limit(samples)
+        if forecast:
+            window["forecast"] = forecast
+    data["history"] = history
+
+
 def finish_success(name: str, data: dict) -> None:
     now = time.time()
+    apply_forecasts(data, load_previous(name), now)
     data.update({
         "ts": now,
         "fetched_at": now,

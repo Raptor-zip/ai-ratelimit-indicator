@@ -141,6 +141,43 @@ function formatClock(epochSeconds) {
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+/* 今日なら時刻だけ、別の日なら日付つきで短く */
+function formatWhen(epochSeconds) {
+    const d = new Date(epochSeconds * 1000);
+    const now = new Date(Date.now());
+    const clock = formatClock(epochSeconds);
+    return d.toDateString() === now.toDateString()
+        ? clock : `${d.getMonth() + 1}/${d.getDate()} ${clock}`;
+}
+
+/* 枠の区別に必要な末尾の 5h/7d を残して短くする */
+function forecastLabel(label, maxChars) {
+    const text = label || '';
+    const suffix = (text.match(/ (5h|7d)$/) || [''])[0];
+    return truncate(text.slice(0, text.length - suffix.length), maxChars - suffix.length) + suffix;
+}
+
+/* 直近の増加ペースが続いた場合の見込み。予測がない枠は null */
+function forecastLine(label, usage) {
+    const limitAt = usage && usage.forecast && usage.forecast.limit_at;
+    if (typeof limitAt !== 'number' || !isFinite(limitAt))
+        return null;
+    const nowSeconds = Date.now() / 1000;
+    const resetsAt = usage.resets_at;
+    if (typeof resetsAt === 'number' && isFinite(resetsAt)) {
+        if (resetsAt <= nowSeconds)
+            return null;
+        if (limitAt >= resetsAt)
+            return { text: `${label} リセットまで持つ見込み`, reaches: false };
+    }
+    if (limitAt - nowSeconds < 60)
+        return { text: `${label} まもなく上限`, reaches: true };
+    return {
+        text: `${label} 上限 ${formatWhen(limitAt)}（あと${formatRemaining(limitAt)}）`,
+        reaches: true,
+    };
+}
+
 /* 現在時刻までに使ってよい理想使用率（リセット時に 100% になる均等ペース） */
 function idealUsagePct(resetsAt, windowSeconds) {
     if (typeof resetsAt !== 'number' || !isFinite(resetsAt) ||
@@ -268,6 +305,9 @@ class ProviderCell {
         this._sub.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         this._sub.clutter_text.line_wrap = false;
         this.box.add_child(this._sub);
+
+        this._forecast = new St.BoxLayout({ vertical: true, visible: false });
+        this.box.add_child(this._forecast);
     }
 
     _makeBarRow(label, divisions) {
@@ -373,6 +413,21 @@ class ProviderCell {
             this._sub.text = parts.join(' · ');
             this._sub.style_class = 'ai-cell-sub';
         }
+
+        // 取得が止まっている間は、古い速度に基づく予測を出さない。
+        const lines = data.ok === false || stale ? [] : [
+            forecastLine('5h', data.five_hour),
+            forecastLine('7d', data.seven_day),
+            ...(data.scoped || []).map(s => s && forecastLine(forecastLabel(s.label, 16), s)),
+        ].filter(Boolean);
+        this._forecast.destroy_all_children();
+        for (const line of lines) {
+            this._forecast.add_child(new St.Label({
+                text: line.text,
+                style_class: `ai-cell-forecast ${line.reaches ? 'ai-usage-crit' : ''}`.trim(),
+            }));
+        }
+        this._forecast.visible = lines.length > 0;
 
         return {
             fiveDelta: paceDelta(five, idealUsagePct(

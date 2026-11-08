@@ -144,6 +144,15 @@
     color: #ff7b63;
 }
 
+.ai-cell-forecast {
+    font-size: 0.75em;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.ai-cell-forecast.ai-usage-crit {
+    color: #ff7b63;
+}
+
 .ai-usage-status {
     font-size: 0.85em;
 }

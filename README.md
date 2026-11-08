@@ -98,6 +98,7 @@ Uninstall with `./install.sh uninstall`.
 - **Menu** (compact 2×2 grid, one cell per tool):
   - Actual percentages and signed pace deviations beside 5h / 7d usage bars with reset countdowns and a white ideal-pace marker; the 7d bar
     also has 7 division marks (one per day)
+  - Projected time each window hits its limit, from the shortest recent span (up to 1 hour) showing at least 5 minutes and 2 points of growth
   - Per-model/per-group scopes when the provider reports any
     (Claude: per-model weekly scopes; AGY: the Claude/GPT model group's 5h and 7d buckets)
   - Last-updated time and a **Refresh now** button (opening the menu also triggers a fetch)
@@ -237,6 +238,7 @@ cd ai-ratelimit-indicator
 - **メニュー**（2×2 グリッド、ツールごとのセル）:
   - 実際の使用率と理想との差、5h / 7d の使用率バーとリセットまでの残り時間（白線は現在時点の理想ペース。
     7d バーには 1 日ごとの 7 分割線も表示）
+  - 上限到達の予測時刻（直近 1 時間以内で、5 分以上かつ 2pt 以上増えた最短区間の速度から計算）
   - モデル別/グループ別のスコープ枠（プロバイダが返す場合のみ。
     Claude: モデル別の週間スコープ。AGY: Claude/GPT モデルグループの 5h と 7d 枠）
   - 最終更新時刻と「今すぐ更新」ボタン（メニューを開いた時点でも取得が走ります）
