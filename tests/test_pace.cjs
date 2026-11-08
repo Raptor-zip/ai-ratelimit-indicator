@@ -90,3 +90,15 @@ test('forecast line distinguishes running out from outlasting the window', () =>
     assert.equal(forecastLabel('GPT-5.3-Codex-Spark 7d', 16), 'GPT-5.3-Code… 7d');
     assert.equal(forecastLabel('Fable', 16), 'Fable');
 });
+
+test('scoped bar rows are inserted above the sub line and forecast', () => {
+    const calls = [];
+    const stub = () => function () { return {add_child() {}}; };
+    const gi = context.imports.gi;
+    gi.St = {BoxLayout: stub(), Label: stub()};
+    gi.Clutter = {ActorAlign: {}};
+    const sandbox = {_sub: 'sub', box: {insert_child_below: (row, sibling) => calls.push(sibling), add_child: () => calls.push('end')}};
+    vm.runInContext('St = imports.gi.St; Clutter = imports.gi.Clutter; MiniBar = class { get actor() { return {}; } };', context);
+    ProviderCell.prototype._makeBarRow.call(sandbox, '', 0);
+    assert.deepEqual(calls, ['sub']);
+});

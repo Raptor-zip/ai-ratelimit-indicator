@@ -331,7 +331,11 @@ class ProviderCell {
         box.add_child(bar.actor);
         box.add_child(pct);
         box.add_child(pace);
-        this.box.add_child(box);
+        // スコープ行は後から増えるので、補足行より上（バーの並び）に差し込む。
+        if (this._sub)
+            this.box.insert_child_below(box, this._sub);
+        else
+            this.box.add_child(box);
         return { box, lab, bar, pct, pace };
     }
 
